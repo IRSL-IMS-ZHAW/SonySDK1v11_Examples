@@ -1,20 +1,25 @@
 # Fully clean and build
+```
 rm -r build
 mkdir build
 cd build
 cmake ..
 cmake --build .
-
+```
 
 # For release build use this instead of just cmake ..
+```
 cmake -DCMAKE_BUILD_TYPE=Release .. 
+```
 
 # fast build
+```
 cd build
 cmake ..
 cmake --build .
+```
 
-
+############################################################################################################
 
 # Build from pre-built CRSDK binary files
 

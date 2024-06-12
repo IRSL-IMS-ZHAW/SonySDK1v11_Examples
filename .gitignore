@@ -38,3 +38,5 @@ dist/
 # IDE files
 .idea/
 .vscode/
+
+app/pictures/**

@@ -2,12 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(RemoteCli LANGUAGES CXX)
 
-# GStreamer and GStreamer-RTSP require pkg-config to find the installed libraries
-find_package(PkgConfig REQUIRED)
-
-# Find GStreamer
-pkg_check_modules(GST REQUIRED gstreamer-1.0)
-pkg_check_modules(GST_RTSP_SERVER REQUIRED gstreamer-rtsp-server-1.0)
+### Enumerate project files ###
 
 ### Enumerate RemoteCli header files ###
 message("[${PROJECT_NAME}] Indexing header files..")
@@ -114,15 +109,12 @@ target_include_directories(${remotecli}
 )
 
 target_include_directories(${sdk_test}
-    PUBLIC ${GST_INCLUDE_DIRS}              # <- NEW
-    PUBLIC ${GST_RTSP_SERVER_INCLUDE_DIRS}  # <- NEW
-
     PUBLIC ${__cli_hdr_dir}
     PUBLIC ${__crsdk_hdr_dir} # defined in enum script
 )
 
 ### Configure external library directories ###
-set(ldir ${CMAKE_CURRENT_SOURCE_DIR}/app)
+set(ldir ${CMAKE_CURRENT_SOURCE_DIR}/external)
 set(cr_ldir ${ldir}/crsdk)
 
 ### Link CRSDK library
@@ -134,10 +126,7 @@ target_link_libraries(${remotecli}
 
 target_link_libraries(${sdk_test}
     PRIVATE ${camera_remote}
-    ${GST_LIBRARIES}                    # <- NEW
-    ${GST_RTSP_SERVER_LIBRARIES}        # <- NEW
 )
-
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8)
@@ -165,6 +154,3 @@ add_custom_command(TARGET ${remotecli} PRE_BUILD
 install(TARGETS ${remotecli} DESTINATION .)
 install(TARGETS ${my_rest} DESTINATION .)
 install(DIRECTORY ${cr_ldir}/ DESTINATION .)
-
-
-

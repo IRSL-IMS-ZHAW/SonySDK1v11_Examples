@@ -35,8 +35,8 @@ void InitGstream(bool rtsp); //int argc, char *argv[]
 void read_flags(int &count);
 void checkForKeyPress();
 void liveView(CrInt32u handle, bool rtsp);
-void pushToGstream(GstElement *src, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag);
-static void need_data(GstElement *src, guint length, gpointer user_data);
+void pushToGstream(GstElement *source, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag);
+static void need_data(GstElement *source, guint length, gpointer user_data);
 static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
 
 static gboolean timeout(GstRTSPServer *server);
@@ -373,14 +373,14 @@ void SingleShot()
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
-static void need_data(GstElement *src, guint length, gpointer user_data)
+static void need_data(GstElement *source, guint length, gpointer user_data)
 {
     // =================================
     //    THIS APPROACH WORKS SLOWLY:
     // =================================
     int retFlag;
     auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
-    pushToGstream(src, length, user_data, pInfo, retFlag);
+    pushToGstream(source, length, user_data, pInfo, retFlag);
      
 }
 
@@ -469,11 +469,13 @@ void liveView(CrInt32u handle, bool rtsp) {
     printf("liveView: In!\n");
 
     InitGstream(rtsp);
-    //if (rtsp){
-    std::thread gstreamLoopThread([&]()
-                                { g_main_loop_run(global_main_loop); });
-    //}
-    
+
+    std::thread gstreamLoopThread([&, rtsp](){
+        if (rtsp){
+            g_main_loop_run(global_main_loop);
+        }
+    });
+
     printf("liveView: Init done!\n");
     
     while(!stream.load()){
@@ -490,12 +492,12 @@ void liveView(CrInt32u handle, bool rtsp) {
     if (!rtsp){
         int retFlag;
         auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
-        GstElement *src;
+
         guint length;
         gpointer user_data;
 
         while (stream.load()) {
-            pushToGstream(src, length,user_data,pInfo, retFlag); //pInfo, retFlag
+            pushToGstream(source, length,user_data,pInfo, retFlag); //pInfo, retFlag
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
             //if(!stream.load()) break;
         }
@@ -516,7 +518,7 @@ void liveView(CrInt32u handle, bool rtsp) {
     
 }
 
-void pushToGstream(GstElement *src, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
+void pushToGstream(GstElement *source, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
 {
     retFlag = 0;
     //std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
@@ -551,7 +553,7 @@ void pushToGstream(GstElement *src, guint length, gpointer user_data, std::uniqu
     // ============================================================
 
     /* THIS COMES FROM THE FAST VERSION */
-    if (!GST_IS_ELEMENT(src))
+    if (!GST_IS_ELEMENT(source))
     {
         std::cerr << "Invalid source element." << std::endl;
         {
@@ -572,7 +574,7 @@ void pushToGstream(GstElement *src, guint length, gpointer user_data, std::uniqu
     pts += GST_BUFFER_DURATION(buffer);
 
     GstFlowReturn ret;
-    g_signal_emit_by_name(src, "push-buffer", buffer, &ret);
+    g_signal_emit_by_name(source, "push-buffer", buffer, &ret);
     gst_buffer_unref(buffer);
 
     if (ret != GST_FLOW_OK)
@@ -588,7 +590,7 @@ void read_flags(int &count)
     count++;
     //if (count % 100 == 0)
     //    shoot.store(true);
-    if (count == 10)
+    if (count == 7)
     {
         printf("> stream = true\n");
         stream.store(true);

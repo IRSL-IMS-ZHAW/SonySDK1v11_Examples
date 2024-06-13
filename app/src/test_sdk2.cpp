@@ -32,37 +32,30 @@ SCRSDK::CrDeviceHandle hDev = 0;
 
 // From GStream
 void InitGstream(bool rtsp); //int argc, char *argv[]
-//static void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
-//static void need_data(GstElement *src, guint length, gpointer user_data);
 void read_flags(int &count);
-void checkForKeyPress(bool rtsp);
-// void StreamLiveViewImageInfo();
-static gboolean timeout(GstRTSPServer *server);
+void checkForKeyPress();
+void liveView(CrInt32u handle, bool rtsp);
+void pushToGstream(GstElement *src, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag);
+static void need_data(GstElement *src, guint length, gpointer user_data);
+static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
 
+static gboolean timeout(GstRTSPServer *server);
 static GstElement *appsrc;
+GstElement *pipeline, *source, *decoder, *sink;
+GMainLoop* global_main_loop = nullptr;
+
+bool appsrc_ready = false;
+
 // Atomic flag to signal all threads to stop
 std::atomic<bool> quit(false);
 std::atomic<bool> program(true);
 std::atomic<bool> shoot(false);
 std::atomic<bool> stream(false);
-// std::atomic<bool> pressed(false);
+
 std::mutex mtx;
-std::condition_variable cv;
-bool appsrc_ready = false;
-
-GstElement *pipeline, *source, *decoder, *sink;
-void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage);
-void liveView(CrInt32u handle, bool rtsp);
-void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag); //
-static void need_data(GstElement *src, guint length, gpointer user_data);
-static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
-
-// Global definition of the GMainLoop
-GMainLoop* global_main_loop = nullptr;
-
-// std::vector<char> shared_buffer;  // Buffer to hold the image data
 std::mutex buffer_mutex; // Mutex for synchronizing access to the buffer
-// std::condition_variable buffer_cond;  // Condition variable to signal data availability
+std::condition_variable cv;
+
 
 int main(int argc, char *argv[])
 {
@@ -113,7 +106,7 @@ int main(int argc, char *argv[])
     it has been initialized, which only happens after a client has connected to the RTSP server.
     */
     std::thread keyPressThread([&]()
-                               { checkForKeyPress(rtsp); });
+                               { checkForKeyPress(); });
 
     std::thread gstream_thread([&]()
                                { liveView(hDev, rtsp); }); //argc, argv
@@ -382,50 +375,13 @@ void SingleShot()
 
 static void need_data(GstElement *src, guint length, gpointer user_data)
 {
-    //std::vector<int8_t> buffer;
-    // ============================================
-    std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
-    SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
-    if (err1 != SCRSDK::CrError_None)
-    {
-        printf("Error: %d", err1);
-        return;
-    }
-
-    std::unique_ptr<SCRSDK::CrImageDataBlock> pLiveViewImage(new SCRSDK::CrImageDataBlock());
-    pLiveViewImage->SetSize(pInfo->GetBufferSize());
-    std::unique_ptr<CrInt8u[]> recvBuffer(new CrInt8u[pInfo->GetBufferSize()]);
-    pLiveViewImage->SetData(recvBuffer.get());
-    
-    SCRSDK::CrError err2 = SCRSDK::GetLiveViewImage(hDev, pLiveViewImage.get());
-    if (err2 != SCRSDK::CrError_None)
-    {
-        printf("Error: %d", err2);
-        return;
-    }
-    CrInt32u size = pLiveViewImage->GetImageSize();
-    CrInt8u *pdata = pLiveViewImage->GetImageData();
-    //std::cout << "size: " << size << std::endl
-
-    // ============================================
-
-    GstBuffer *gst_buffer = gst_buffer_new_allocate(NULL, size, NULL);
-    gst_buffer_fill(gst_buffer, 0, pdata, size);
-
-    // Setting PTS and DURATION for proper playback
-    static guint64 pts = 0;
-    GST_BUFFER_PTS(gst_buffer) = pts;
-    GST_BUFFER_DURATION(gst_buffer) = gst_util_uint64_scale_int(1, GST_SECOND, 30); // 30fps
-    pts += GST_BUFFER_DURATION(gst_buffer);
-
-    GstFlowReturn ret;
-    g_signal_emit_by_name(src, "push-buffer", gst_buffer, &ret);
-    gst_buffer_unref(gst_buffer);
-
-    if (ret != GST_FLOW_OK)
-    {
-        g_warning("Error pushing buffer to appsrc");
-    }
+    // =================================
+    //    THIS APPROACH WORKS SLOWLY:
+    // =================================
+    int retFlag;
+    auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
+    pushToGstream(src, length, user_data, pInfo, retFlag);
+     
 }
 
 void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data)
@@ -440,22 +396,10 @@ void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media,
     }
 
     g_signal_connect(appsrc, "need-data", G_CALLBACK(need_data), NULL);
-    
-    //std::lock_guard<std::mutex> lock(mtx);
+
     appsrc_ready = true;
     
-    //cv.notify_one();
-
-     /*
-    // THIS WAS FROM PREVIOUS VERSION
-    // Properly configure appsrc based on your data format
-    GstCaps *caps = gst_caps_new_simple("image/jpeg", "width", G_TYPE_INT, 1920, "height", G_TYPE_INT, 1080, NULL);
-    g_object_set(appsrc_rtsp, "caps", caps, "format", GST_FORMAT_TIME, NULL);
-    gst_caps_unref(caps);
-    */
     gst_object_unref(element); // Unref the element, not appsrc
-
-
 }
 
 void InitGstream(bool rtsp) {
@@ -478,13 +422,6 @@ void InitGstream(bool rtsp) {
                 "caps=image/jpeg,width=640,height=480 ! "
                 "jpegparse ! rtpjpegpay name=pay0 pt=96 )");
 
-        /*
-            "( appsrc name=mysource is-live=true format=time "
-            "caps=image/jpeg,width=(int)1920,height=(int)1080,framerate=(fraction)30/1 ! "
-            "jpegparse ! jpegdec ! videoconvert ! "
-            "x264enc speed-preset=ultrafast tune=zerolatency ! "
-            "rtph264pay config-interval=1 pt=96 name=pay0 )");
-        */
         gst_rtsp_media_factory_set_shared(factory, TRUE);
         gst_rtsp_mount_points_add_factory(mount_points, "/test", factory);
         g_object_unref(mount_points);
@@ -493,43 +430,10 @@ void InitGstream(bool rtsp) {
         g_signal_connect(factory, "media-configure", G_CALLBACK(media_configure_callback), NULL);
         gst_rtsp_server_attach(server, nullptr);
 
-        /* THIS COMES FROM PREVIOUS VERSION
-
-        // Add appsrc element to the pipeline
-        source = gst_bin_get_by_name(GST_BIN(pipeline), "mysource");
-        if (!source) {
-            source = gst_element_factory_make("appsrc", "mysource");
-            gst_bin_add(GST_BIN(pipeline), source);
-        }
-
-        // Start the pipeline
-        gst_element_set_state(pipeline, GST_STATE_PLAYING);
-        */
-
         g_timeout_add_seconds(2, (GSourceFunc)timeout, server);
 
         g_print("Stream ready at rtsp://127.0.0.1:8554/test\n");
-        // Run the main loop in a separate thread to allow for graceful shutdown
 
-        //std::thread gstreamLoopThread([&]()
-        //                            { g_main_loop_run(global_main_loop); });
-
-        /* --------------------------------------
-        // Try to make "loop" global and then break the loop after "Q"
-        // --------------------------------------
-        // Continuously check if the program should quit
-        while (program.load())
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        // Stop the GMainLoop and join the thread
-        g_main_loop_quit(global_main_loop);
-        if (gstreamLoopThread.joinable())
-        {
-            gstreamLoopThread.join();
-        }
-        */
     }
     else{
         pipeline = gst_pipeline_new("video-pipeline");
@@ -558,28 +462,12 @@ void InitGstream(bool rtsp) {
     printf("Quiting InitGstream\n");
 }
 
-// Function to push JPEG data into GStreamer pipeline
-void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage) {
-    GstBuffer *buffer = gst_buffer_new_allocate(NULL, pLiveViewImage->GetImageSize(), NULL);
-    gst_buffer_fill(buffer, 0, pLiveViewImage->GetImageData(), pLiveViewImage->GetImageSize());
-
-    GstFlowReturn ret;
-    g_signal_emit_by_name(source, "push-buffer", buffer, &ret);
-    if (ret != GST_FLOW_OK) {
-        std::cerr << "Error pushing buffer to GStreamer pipeline." << std::endl;
-    }
-
-    gst_buffer_unref(buffer);
-    return;
-}
-
 // Main function for fetching and displaying live view images
 void liveView(CrInt32u handle, bool rtsp) {
-    // Initialization code similar to previous example
+
     // Assume handle and SDK setup done here
     printf("liveView: In!\n");
 
-    //global_main_loop = g_main_loop_new(nullptr, FALSE);
     InitGstream(rtsp);
     //if (rtsp){
     std::thread gstreamLoopThread([&]()
@@ -599,12 +487,15 @@ void liveView(CrInt32u handle, bool rtsp) {
     auto pLiveViewImage = std::make_unique<SCRSDK::CrImageDataBlock>();
     */ 
     
-
     if (!rtsp){
         int retFlag;
         auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
+        GstElement *src;
+        guint length;
+        gpointer user_data;
+
         while (stream.load()) {
-            pushToGstream_offline(pInfo, retFlag); //pInfo, retFlag
+            pushToGstream(src, length,user_data,pInfo, retFlag); //pInfo, retFlag
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
             //if(!stream.load()) break;
         }
@@ -625,7 +516,7 @@ void liveView(CrInt32u handle, bool rtsp) {
     
 }
 
-void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
+void pushToGstream(GstElement *src, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
 {
     retFlag = 0;
     //std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
@@ -660,7 +551,7 @@ void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &ret
     // ============================================================
 
     /* THIS COMES FROM THE FAST VERSION */
-    if (!GST_IS_ELEMENT(source))
+    if (!GST_IS_ELEMENT(src))
     {
         std::cerr << "Invalid source element." << std::endl;
         {
@@ -681,7 +572,7 @@ void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &ret
     pts += GST_BUFFER_DURATION(buffer);
 
     GstFlowReturn ret;
-    g_signal_emit_by_name(source, "push-buffer", buffer, &ret);
+    g_signal_emit_by_name(src, "push-buffer", buffer, &ret);
     gst_buffer_unref(buffer);
 
     if (ret != GST_FLOW_OK)
@@ -705,7 +596,7 @@ void read_flags(int &count)
     // if (quit.load()) program.store(false); // Stop the program after some cycles
 }
 
-void checkForKeyPress(bool rtsp)
+void checkForKeyPress() //bool rtsp
 {
     struct termios oldt, newt;
     tcgetattr(STDIN_FILENO, &oldt);
@@ -723,10 +614,8 @@ void checkForKeyPress(bool rtsp)
             quit.store(true);
             program.store(false);
             stream.store(false);
-            // printf("program.load(): %d\n",program.load());
+
             std::cout << "QUIT!!\n";
-                    // Stop the GMainLoop and join the thread
-            //if(rtsp) g_main_loop_quit(global_main_loop);
         }
         if (read(STDIN_FILENO, &ch, 1) > 0 && (ch == 'T' || ch == 't')){
             shoot.store(true);

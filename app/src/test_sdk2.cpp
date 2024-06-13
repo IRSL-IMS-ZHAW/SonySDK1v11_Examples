@@ -35,7 +35,7 @@ void InitGstream(bool rtsp); //int argc, char *argv[]
 //static void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
 //static void need_data(GstElement *src, guint length, gpointer user_data);
 void read_flags(int &count);
-void checkForKeyPress();
+void checkForKeyPress(bool rtsp);
 // void StreamLiveViewImageInfo();
 static gboolean timeout(GstRTSPServer *server);
 
@@ -52,8 +52,13 @@ bool appsrc_ready = false;
 
 GstElement *pipeline, *source, *decoder, *sink;
 void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage);
-void liveView(CrInt32u handle);
+void liveView(CrInt32u handle, bool rtsp);
+void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag); //
+static void need_data(GstElement *src, guint length, gpointer user_data);
 static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
+
+// Global definition of the GMainLoop
+GMainLoop* global_main_loop = nullptr;
 
 // std::vector<char> shared_buffer;  // Buffer to hold the image data
 std::mutex buffer_mutex; // Mutex for synchronizing access to the buffer
@@ -98,7 +103,7 @@ int main(int argc, char *argv[])
     // GetCamProperties();
 
     int count = 0;
-
+    bool rtsp = true;
     int numOfPictures = 4;
     int intervalPerPicture_sec = 3;
     // SequentialShooting(numOfPictures, intervalPerPicture_sec);
@@ -108,10 +113,10 @@ int main(int argc, char *argv[])
     it has been initialized, which only happens after a client has connected to the RTSP server.
     */
     std::thread keyPressThread([&]()
-                               { checkForKeyPress(); });
+                               { checkForKeyPress(rtsp); });
 
     std::thread gstream_thread([&]()
-                               { liveView(hDev); }); //argc, argv
+                               { liveView(hDev, rtsp); }); //argc, argv
 
     std::thread shooting_thread([&]()
                                 { SequentialShooting(numOfPictures, intervalPerPicture_sec); });
@@ -375,52 +380,120 @@ void SingleShot()
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
-// Function to handle media configuration
-static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data) {
-    GstElement *element = gst_rtsp_media_get_element(media); // Get the media pipeline
-    GstElement *appsrc_rtsp = gst_bin_get_by_name_recurse_up(GST_BIN(element), "mysource");
-    if (!appsrc_rtsp) {
-        std::cerr << "Could not find appsrc element." << std::endl;
-        gst_object_unref(element);
+static void need_data(GstElement *src, guint length, gpointer user_data)
+{
+    //std::vector<int8_t> buffer;
+    // ============================================
+    std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
+    SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
+    if (err1 != SCRSDK::CrError_None)
+    {
+        printf("Error: %d", err1);
         return;
     }
 
+    std::unique_ptr<SCRSDK::CrImageDataBlock> pLiveViewImage(new SCRSDK::CrImageDataBlock());
+    pLiveViewImage->SetSize(pInfo->GetBufferSize());
+    std::unique_ptr<CrInt8u[]> recvBuffer(new CrInt8u[pInfo->GetBufferSize()]);
+    pLiveViewImage->SetData(recvBuffer.get());
+    
+    SCRSDK::CrError err2 = SCRSDK::GetLiveViewImage(hDev, pLiveViewImage.get());
+    if (err2 != SCRSDK::CrError_None)
+    {
+        printf("Error: %d", err2);
+        return;
+    }
+    CrInt32u size = pLiveViewImage->GetImageSize();
+    CrInt8u *pdata = pLiveViewImage->GetImageData();
+    //std::cout << "size: " << size << std::endl
+
+    // ============================================
+
+    GstBuffer *gst_buffer = gst_buffer_new_allocate(NULL, size, NULL);
+    gst_buffer_fill(gst_buffer, 0, pdata, size);
+
+    // Setting PTS and DURATION for proper playback
+    static guint64 pts = 0;
+    GST_BUFFER_PTS(gst_buffer) = pts;
+    GST_BUFFER_DURATION(gst_buffer) = gst_util_uint64_scale_int(1, GST_SECOND, 30); // 30fps
+    pts += GST_BUFFER_DURATION(gst_buffer);
+
+    GstFlowReturn ret;
+    g_signal_emit_by_name(src, "push-buffer", gst_buffer, &ret);
+    gst_buffer_unref(gst_buffer);
+
+    if (ret != GST_FLOW_OK)
+    {
+        g_warning("Error pushing buffer to appsrc");
+    }
+}
+
+void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data)
+{
+    GstElement *element = gst_rtsp_media_get_element(media);
+    appsrc = gst_bin_get_by_name_recurse_up(GST_BIN(element), "mysrc");
+
+    if (!appsrc)
+    {
+        std::cerr << "Failed to retrieve 'appsrc' element.\n";
+        return;
+    }
+
+    g_signal_connect(appsrc, "need-data", G_CALLBACK(need_data), NULL);
+    
+    //std::lock_guard<std::mutex> lock(mtx);
+    appsrc_ready = true;
+    
+    //cv.notify_one();
+
+     /*
+    // THIS WAS FROM PREVIOUS VERSION
     // Properly configure appsrc based on your data format
     GstCaps *caps = gst_caps_new_simple("image/jpeg", "width", G_TYPE_INT, 1920, "height", G_TYPE_INT, 1080, NULL);
     g_object_set(appsrc_rtsp, "caps", caps, "format", GST_FORMAT_TIME, NULL);
     gst_caps_unref(caps);
+    */
+    gst_object_unref(element); // Unref the element, not appsrc
 
-    // Additional settings or signal connections to push data should be placed here
 
-    gst_object_unref(appsrc_rtsp);
-    gst_object_unref(element);
 }
+
 void InitGstream(bool rtsp) {
     gst_init(nullptr, nullptr);
 
     if (rtsp){
         // Create the main pipeline
-        pipeline = gst_pipeline_new("rtsp-pipeline");
+        //pipeline = gst_pipeline_new("rtsp-pipeline");
 
-        auto loop = g_main_loop_new(nullptr, FALSE);
-        auto server = gst_rtsp_server_new();
-        auto factory = gst_rtsp_media_factory_new();
+        global_main_loop = g_main_loop_new(nullptr, FALSE);
+        GstRTSPServer* server = gst_rtsp_server_new();
+        gst_rtsp_server_set_service(server, "8554");
+
+        GstRTSPMountPoints* mount_points = gst_rtsp_server_get_mount_points(server);
+        GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
         
         // RTSP initialization remains mostly the same but correct the caps in the launch string:
         gst_rtsp_media_factory_set_launch(factory,
+                "( appsrc name=mysrc is-live=true block=true format=TIME "
+                "caps=image/jpeg,width=640,height=480 ! "
+                "jpegparse ! rtpjpegpay name=pay0 pt=96 )");
+
+        /*
             "( appsrc name=mysource is-live=true format=time "
             "caps=image/jpeg,width=(int)1920,height=(int)1080,framerate=(fraction)30/1 ! "
             "jpegparse ! jpegdec ! videoconvert ! "
             "x264enc speed-preset=ultrafast tune=zerolatency ! "
             "rtph264pay config-interval=1 pt=96 name=pay0 )");
-
-        g_signal_connect(factory, "media-configure", G_CALLBACK(media_configure), NULL);
-
-        auto mount_points = gst_rtsp_server_get_mount_points(server);
+        */
+        gst_rtsp_media_factory_set_shared(factory, TRUE);
         gst_rtsp_mount_points_add_factory(mount_points, "/test", factory);
         g_object_unref(mount_points);
 
+        // Before, it was "media_configure", now is "media_configure_callback"
+        g_signal_connect(factory, "media-configure", G_CALLBACK(media_configure_callback), NULL);
         gst_rtsp_server_attach(server, nullptr);
+
+        /* THIS COMES FROM PREVIOUS VERSION
 
         // Add appsrc element to the pipeline
         source = gst_bin_get_by_name(GST_BIN(pipeline), "mysource");
@@ -431,11 +504,32 @@ void InitGstream(bool rtsp) {
 
         // Start the pipeline
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
+        */
 
-        std::thread rtsp_thread([loop]() { g_main_loop_run(loop); });
-        rtsp_thread.detach();
+        g_timeout_add_seconds(2, (GSourceFunc)timeout, server);
 
-        std::cout << "RTSP Server started at rtsp://localhost:8554/test" << std::endl;
+        g_print("Stream ready at rtsp://127.0.0.1:8554/test\n");
+        // Run the main loop in a separate thread to allow for graceful shutdown
+
+        //std::thread gstreamLoopThread([&]()
+        //                            { g_main_loop_run(global_main_loop); });
+
+        /* --------------------------------------
+        // Try to make "loop" global and then break the loop after "Q"
+        // --------------------------------------
+        // Continuously check if the program should quit
+        while (program.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        // Stop the GMainLoop and join the thread
+        g_main_loop_quit(global_main_loop);
+        if (gstreamLoopThread.joinable())
+        {
+            gstreamLoopThread.join();
+        }
+        */
     }
     else{
         pipeline = gst_pipeline_new("video-pipeline");
@@ -459,6 +553,9 @@ void InitGstream(bool rtsp) {
 
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
     }
+    
+    
+    printf("Quiting InitGstream\n");
 }
 
 // Function to push JPEG data into GStreamer pipeline
@@ -477,13 +574,18 @@ void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage) {
 }
 
 // Main function for fetching and displaying live view images
-void liveView(CrInt32u handle) {
+void liveView(CrInt32u handle, bool rtsp) {
     // Initialization code similar to previous example
     // Assume handle and SDK setup done here
     printf("liveView: In!\n");
-    bool rtsp = false;
 
+    //global_main_loop = g_main_loop_new(nullptr, FALSE);
     InitGstream(rtsp);
+    //if (rtsp){
+    std::thread gstreamLoopThread([&]()
+                                { g_main_loop_run(global_main_loop); });
+    //}
+    
     printf("liveView: Init done!\n");
     
     while(!stream.load()){
@@ -496,57 +598,96 @@ void liveView(CrInt32u handle) {
     > CrWarning_Frame_NotUpdated
     auto pLiveViewImage = std::make_unique<SCRSDK::CrImageDataBlock>();
     */ 
-    auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
+    
 
-    while (stream.load()) {
-        //std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
-        SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
-        if (err1 != SCRSDK::CrError_None)
+    if (!rtsp){
+        int retFlag;
+        auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
+        while (stream.load()) {
+            pushToGstream_offline(pInfo, retFlag); //pInfo, retFlag
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+            //if(!stream.load()) break;
+        }
+        gst_element_set_state(pipeline, GST_STATE_NULL);
+        gst_object_unref(GST_OBJECT(pipeline));
+    }
+    else{
+        while (stream.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        g_main_loop_quit(global_main_loop);
+        
+    }
+    if (gstreamLoopThread.joinable())
+    {
+        gstreamLoopThread.join();
+    }
+    
+}
+
+void pushToGstream_offline(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
+{
+    retFlag = 0;
+    //std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
+    SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
+    if (err1 != SCRSDK::CrError_None)
+    {
+        printf("Error 1: %d \n", err1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
         {
-            printf("Error 1: %d \n", err1);
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            continue;
-        }
-
-        std::unique_ptr<SCRSDK::CrImageDataBlock> pLiveViewImage(new SCRSDK::CrImageDataBlock());
-        pLiveViewImage->SetSize(pInfo->GetBufferSize());
-        std::unique_ptr<CrInt8u[]> recvBuffer(new CrInt8u[pInfo->GetBufferSize()]);
-        pLiveViewImage->SetData(recvBuffer.get());
-        
-        SCRSDK::CrError err2 = SCRSDK::GetLiveViewImage(hDev, pLiveViewImage.get());
-        if (err2 != SCRSDK::CrError_None)
-        {
-            printf("Error 2: %d \n", err2);
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            continue;
-        }
-        // ============================================================
-        //  void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage) {
-        // ============================================================
-        
-        if (!GST_IS_ELEMENT(source)){
-            std::cerr << "Invalid source element." << std::endl;
-            continue;
-        }
-        
-        // Function to push JPEG data into GStreamer pipeline
-        GstBuffer *buffer = gst_buffer_new_allocate(NULL, pLiveViewImage->GetImageSize(), NULL);
-        gst_buffer_fill(buffer, 0, pLiveViewImage->GetImageData(), pLiveViewImage->GetImageSize());
-
-        GstFlowReturn ret;
-        g_signal_emit_by_name(source, "push-buffer", buffer, &ret);
-        gst_buffer_unref(buffer);
-
-        if (ret != GST_FLOW_OK) {
-            std::cerr << "Error pushing buffer to GStreamer pipeline." << std::endl;
-        }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(33));
-        //if(!stream.load()) break;
+            retFlag = 1;
+            return;
+        };
     }
 
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    gst_object_unref(GST_OBJECT(pipeline));
+    std::unique_ptr<SCRSDK::CrImageDataBlock> pLiveViewImage(new SCRSDK::CrImageDataBlock());
+    pLiveViewImage->SetSize(pInfo->GetBufferSize());
+    std::unique_ptr<CrInt8u[]> recvBuffer(new CrInt8u[pInfo->GetBufferSize()]);
+    pLiveViewImage->SetData(recvBuffer.get());
+
+    SCRSDK::CrError err2 = SCRSDK::GetLiveViewImage(hDev, pLiveViewImage.get());
+    if (err2 != SCRSDK::CrError_None)
+    {
+        printf("Error 2: %d \n", err2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        {
+            retFlag = 2;
+            return;
+        };
+    }
+    // ============================================================
+    //  void pushFrameToGstreamer(SCRSDK::CrImageDataBlock* pLiveViewImage) {
+    // ============================================================
+
+    /* THIS COMES FROM THE FAST VERSION */
+    if (!GST_IS_ELEMENT(source))
+    {
+        std::cerr << "Invalid source element." << std::endl;
+        {
+            retFlag = 3;
+            return;
+        };
+    }
+
+    // Function to push JPEG data into GStreamer pipeline
+    GstBuffer *buffer = gst_buffer_new_allocate(NULL, pLiveViewImage->GetImageSize(), NULL);
+    gst_buffer_fill(buffer, 0, pLiveViewImage->GetImageData(), pLiveViewImage->GetImageSize());
+
+    // THIS COMES FROM THE SLOW  VERSION
+    // Setting PTS and DURATION for proper playback
+    static guint64 pts = 0;
+    GST_BUFFER_PTS(buffer) = pts;
+    GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale_int(1, GST_SECOND, 30); // 30fps
+    pts += GST_BUFFER_DURATION(buffer);
+
+    GstFlowReturn ret;
+    g_signal_emit_by_name(source, "push-buffer", buffer, &ret);
+    gst_buffer_unref(buffer);
+
+    if (ret != GST_FLOW_OK)
+    {
+        std::cerr << "Error pushing buffer to GStreamer pipeline." << std::endl;
+    }
 }
 
 void read_flags(int &count)
@@ -564,7 +705,7 @@ void read_flags(int &count)
     // if (quit.load()) program.store(false); // Stop the program after some cycles
 }
 
-void checkForKeyPress()
+void checkForKeyPress(bool rtsp)
 {
     struct termios oldt, newt;
     tcgetattr(STDIN_FILENO, &oldt);
@@ -584,12 +725,23 @@ void checkForKeyPress()
             stream.store(false);
             // printf("program.load(): %d\n",program.load());
             std::cout << "QUIT!!\n";
+                    // Stop the GMainLoop and join the thread
+            //if(rtsp) g_main_loop_quit(global_main_loop);
         }
         if (read(STDIN_FILENO, &ch, 1) > 0 && (ch == 'T' || ch == 't')){
-            shoot.store(!shoot.load());
+            shoot.store(true);
         }
         
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Poll every 100ms
     }
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // Restore terminal settings
+}
+
+
+static gboolean timeout(GstRTSPServer *server)
+{
+    GstRTSPSessionPool *pool = gst_rtsp_server_get_session_pool(server);
+    gst_rtsp_session_pool_cleanup(pool);
+    g_object_unref(pool);
+    return TRUE;
 }

@@ -8,6 +8,7 @@ find_package(PkgConfig REQUIRED)
 # Find GStreamer
 pkg_check_modules(GST REQUIRED gstreamer-1.0)
 pkg_check_modules(GST_RTSP_SERVER REQUIRED gstreamer-rtsp-server-1.0)
+pkg_check_modules(GSTREAMER_APP REQUIRED gstreamer-app-1.0)
 
 ### Enumerate RemoteCli header files ###
 message("[${PROJECT_NAME}] Indexing header files..")
@@ -116,6 +117,7 @@ target_include_directories(${remotecli}
 target_include_directories(${sdk_test}
     PUBLIC ${GST_INCLUDE_DIRS}              # <- NEW
     PUBLIC ${GST_RTSP_SERVER_INCLUDE_DIRS}  # <- NEW
+    PUBLIC ${GSTREAMER_APP_INCLUDE_DIRS}    # <- NEW
 
     PUBLIC ${__cli_hdr_dir}
     PUBLIC ${__crsdk_hdr_dir} # defined in enum script
@@ -136,6 +138,7 @@ target_link_libraries(${sdk_test}
     PRIVATE ${camera_remote}
     ${GST_LIBRARIES}                    # <- NEW
     ${GST_RTSP_SERVER_LIBRARIES}        # <- NEW
+    ${GSTREAMER_APP_LIBRARIES}          # <- NEW
 )
 
 

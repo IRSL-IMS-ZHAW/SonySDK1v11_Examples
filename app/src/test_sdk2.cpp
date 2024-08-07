@@ -97,12 +97,34 @@ public:
 class CameraGstream{
 private:
     SCRSDK::CrDeviceHandle hDev;
-
+    
     GstElement *appsrc;
     GstElement *pipeline, *source, *decoder, *sink;
-    GMainLoop *main_loop = nullptr;
+    GMainLoop *main_loop;
+    guint length;
+    gpointer user_data;
+    //auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
 
 public:
+    
+    CameraGstream() : main_loop(nullptr), hDev(0), pipeline(nullptr), source(nullptr), decoder(nullptr), sink(nullptr) {
+        printf("CameraGstream constructed: %p\n", this);
+    }
+
+    ~CameraGstream() {
+        printf("CameraGstream destructed: %p\n", this);
+    }
+
+    void SetDeviceHandle(SCRSDK::CrDeviceHandle newHandle) {
+        //std::lock_guard<std::mutex> lock(mtx);
+        hDev = newHandle;
+    }
+
+    SCRSDK::CrDeviceHandle GetDeviceHandle() {
+        //std::lock_guard<std::mutex> lock(mtx);
+        return hDev;
+    }
+
     static gboolean timeout(GstRTSPServer *server)
     {
         GstRTSPSessionPool *pool = gst_rtsp_server_get_session_pool(server);
@@ -110,9 +132,16 @@ public:
         g_object_unref(pool);
         return TRUE;
     }
+    struct CallbackData {
+        CameraGstream* self;
+        SCRSDK::CrDeviceHandle hDev;
+    };
 
     static void media_configure_callback(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data)
     {
+        printf("========================\n");
+        printf("media_configure_callback\n");
+        
         CameraGstream *self = static_cast<CameraGstream*>(user_data);  // Cast user_data back to CameraGstream instance
 
         GstElement *element = gst_rtsp_media_get_element(media);
@@ -124,19 +153,33 @@ public:
             return;
         }
 
-        g_signal_connect(self->appsrc, "need-data", G_CALLBACK(need_data), self);
+        printf("[media_configure_callback] GetDeviceHandle = %ld\n", self->GetDeviceHandle());
+        printf("[media_configure_callback] Instance address = %p\n", (void*)self);
+
+        CallbackData* callbackData = new CallbackData{self, self->hDev};
+
+        g_signal_connect(self->appsrc, "need-data", G_CALLBACK(need_data), callbackData);
 
         //appsrc_ready = true;
 
         gst_object_unref(element); // Unref the element, not appsrc
+
+        printf("Exiting media_configure_callback\n");
+        printf("========================\n");
     }
 
-    void InitGstream(SCRSDK::CrDeviceHandle ext_hDev, bool rtsp)
+    void InitGstream(bool rtsp)
     {
-        if (ext_hDev == 0) {
+        printf("InitGstream\n");
+        //hDev = ext_hDev;
+
+        if (hDev == 0) {
+            printf("[InitGstream] Error: hDev\n");
             return;
         }
-        hDev = ext_hDev;
+        printf("hDev = %ld\n", hDev);
+        printf("GetDeviceHandle = %ld\n", GetDeviceHandle());
+        
         
         gst_init(nullptr, nullptr);
 
@@ -163,9 +206,10 @@ public:
             g_object_unref(mount_points);
 
             g_signal_connect(factory, "media-configure", G_CALLBACK(media_configure_callback), this);
+            printf("GetDeviceHandle = %ld\n", GetDeviceHandle());
             gst_rtsp_server_attach(server, nullptr);
 
-            g_timeout_add_seconds(2, (GSourceFunc)timeout, server);
+            //g_timeout_add_seconds(2, (GSourceFunc)timeout, server);
 
             g_print("Stream ready at rtsp://127.0.0.1:8554/test\n");
         }
@@ -198,39 +242,39 @@ public:
     }
 
 
-    void pushToGstream(guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag) //
+    int pushToGstream() //
     {   
-        
-        /*
-            MIGHT BE A GOOD SOLUTION TO PASS "hDev" AS PARAMETER IN "pushToGstream" 
+        printf("[pushToGstream]\n");
+        int retFlag = 0;
+        std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
 
-        */
-        retFlag = 0;
-        // std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
+        printf("hDev = %ld\n", hDev);
+        printf("GetDeviceHandle = %ld\n", GetDeviceHandle());
+
         SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
+        printf("A\n");
         if (err1 != SCRSDK::CrError_None)
         {
             printf("Error 1: %d \n", err1);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             {
                 retFlag = 1;
-                return;
+                return 1;
             };
         }
-
         std::unique_ptr<SCRSDK::CrImageDataBlock> pLiveViewImage(new SCRSDK::CrImageDataBlock());
         pLiveViewImage->SetSize(pInfo->GetBufferSize());
         std::unique_ptr<CrInt8u[]> recvBuffer(new CrInt8u[pInfo->GetBufferSize()]);
         pLiveViewImage->SetData(recvBuffer.get());
-
         SCRSDK::CrError err2 = SCRSDK::GetLiveViewImage(hDev, pLiveViewImage.get());
+        
         if (err2 != SCRSDK::CrError_None)
         {
             printf("Error 2: %d \n", err2);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             {
                 retFlag = 2;
-                return;
+                return 2;
             };
         }
         // ============================================================
@@ -243,7 +287,7 @@ public:
             std::cerr << "Invalid source element." << std::endl;
             {
                 retFlag = 3;
-                return;
+                return 3;
             };
         }
 
@@ -266,22 +310,22 @@ public:
         {
             std::cerr << "Error pushing buffer to GStreamer pipeline." << std::endl;
         }
+        return 0;
     }
 
-    static void need_data(guint length, gpointer user_data)
+    static void need_data(gpointer user_data)
     {
-        // =================================
-        //    THIS APPROACH WORKS SLOWLY:
-        // =================================
+        CallbackData* data = static_cast<CallbackData*>(user_data);
+        if (!data || !data->self) {
+            std::cerr << "Invalid data passed to need_data\n";
+            return;
+        }
+
+        printf("[need_data] hDev = %ld\n", (long) data->hDev);
         
-        CameraGstream *self = static_cast<CameraGstream*>(user_data); // Cast user_data back to CameraGstream instance
-        int retFlag;
-
-        // Create a unique pointer to CrImageInfo which will be passed to pushToGstream
-        auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
-
-        // Now, call pushToGstream on the instance of CameraGstream, not statically
-        self->pushToGstream(length, user_data, pInfo, retFlag);
+        // Now call pushToGstream on the instance of CameraGstream, not statically
+        data->self->pushToGstream();
+        // Consider handling the deletion of data here if it's the last use
     }
 
     void DisconnectGstream(){
@@ -291,12 +335,14 @@ public:
     
     void InitializeMainLoop() {
         if (main_loop == nullptr) {
+            printf("InitializeMainLoop\n");
             main_loop = g_main_loop_new(nullptr, FALSE);
         }
     }
 
     void LoopRun(){
         if (main_loop == nullptr) {
+            printf("[LoopRun] Error!\n");
             return;
         }
         g_main_loop_run(main_loop);
@@ -492,11 +538,26 @@ public:
         return;
     }
 
+
+    void debug_streamSetHande(SCRSDK::CrDeviceHandle ext_hDev){
+        gstream.SetDeviceHandle(ext_hDev);
+    }
+
+    SCRSDK::CrDeviceHandle debug_streamGetHande(){
+        return gstream.GetDeviceHandle();
+    }
+
     void streamInit(bool rtsp){
-        gstream.InitGstream(hDev, rtsp);
+        gstream.SetDeviceHandle(hDev);
+        gstream.InitGstream(rtsp);
     }   
 
+    void streamInitializeMainLoop(){
+        gstream.InitializeMainLoop();
+    }
+
     void streamLoopRun(){
+        printf("streamLoopRun\n");
         gstream.LoopRun();
         //g_main_loop_run(main_loop);
     }
@@ -504,12 +565,12 @@ public:
     void streamLoopQuit(){
         gstream.LoopQuit();
         //g_main_loop_quit(main_loop);
+        printf("streamLoopQuit\n");
     }
 
-    void streamPush(std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag){
-        guint length;
-        gpointer user_data;
-        gstream.pushToGstream(length, user_data, pInfo, retFlag);
+    void streamPush(int &retFlag){
+        printf("streamPush\n");
+        gstream.pushToGstream();
     }
 
     void streamDisconnect(){
@@ -542,7 +603,7 @@ SCRSDK::CrDeviceHandle hDev = 0;
 
 
 // From GStream
-void InitGstream(bool rtsp); // int argc, char *argv[]
+//void InitGstream(bool rtsp); // int argc, char *argv[]
 void read_flags(int &count);
 void checkForKeyPress();
 void liveViewRoutine(Camera sonyCamera, bool rtsp); //CrInt32u handle, 
@@ -574,17 +635,6 @@ int main(int argc, char *argv[])
     RemoteSDKController remoteController;
     
     remoteController.init();
-    //CrInt8u *cam_id = remoteController.enumerate();
-
-    /*
-    InitSDK();
-
-    if (!Enumerate())
-    {
-        std::cerr << "Invalid camera ID provided." << std::endl;
-        return 0;
-    }
-    */
 
     if (!remoteController.enumerate())
     {
@@ -612,7 +662,7 @@ int main(int argc, char *argv[])
         ICrEnumCameraObjectInfo object returned from the EnumCameraObjects() function
     */
 
-    sonyCamera.releasePcam();
+    //sonyCamera.releasePcam();
     remoteController.releaseEnum();
 
     //pEnum->Release(); // After this point, pobj or any data derived from it might be invalid!
@@ -730,10 +780,16 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     sonyCamera.streamInit(rtsp);
     //InitGstream(rtsp);
 
+    printf("[MAIN] [1] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+
     std::thread gstreamLoopThread([&, rtsp]()
                                   {
         if (rtsp){
+            printf("-----------------------------------\n");
+            sonyCamera.streamInitializeMainLoop();
+            printf("-----------------------------------\n");
             sonyCamera.streamLoopRun();
+            printf("-----------------------------------\n");
             //g_main_loop_run(main_loop);
         } });
 
@@ -745,6 +801,8 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     }
     printf("liveView: Started!\n");
 
+    printf("[MAIN] [2] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+
     /*
     > If the this is declared outside the while, the error 13105 arises
     > CrWarning_Frame_NotUpdated
@@ -754,14 +812,14 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     if (!rtsp)
     {
         int retFlag;
-        auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
+        //auto pInfo = std::make_unique<SCRSDK::CrImageInfo>();
 
         //guint length;
         //gpointer user_data;
 
         while (stream.load())
         {
-            sonyCamera.streamPush(pInfo, retFlag); // pInfo, retFlag
+            sonyCamera.streamPush(retFlag); // pInfo, retFlag
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
             // if(!stream.load()) break;
         }
@@ -774,7 +832,8 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     {
         while (stream.load())
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            printf("[MAIN] [loop] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
 
         sonyCamera.streamLoopQuit();

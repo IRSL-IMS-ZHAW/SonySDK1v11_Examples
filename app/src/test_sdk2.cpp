@@ -244,15 +244,15 @@ public:
 
     int pushToGstream() //
     {   
-        printf("[pushToGstream]\n");
+        //printf("[pushToGstream]\n");
         int retFlag = 0;
         std::unique_ptr<SCRSDK::CrImageInfo> pInfo(new SCRSDK::CrImageInfo());
 
-        printf("hDev = %ld\n", hDev);
-        printf("GetDeviceHandle = %ld\n", GetDeviceHandle());
+        //printf("hDev = %ld\n", hDev);
+        //printf("GetDeviceHandle = %ld\n", GetDeviceHandle());
 
         SCRSDK::CrError err1 = SCRSDK::GetLiveViewImageInfo(hDev, pInfo.get());
-        printf("A\n");
+        //printf("A\n");
         if (err1 != SCRSDK::CrError_None)
         {
             printf("Error 1: %d \n", err1);
@@ -569,7 +569,7 @@ public:
     }
 
     void streamPush(int &retFlag){
-        printf("streamPush\n");
+        //printf("streamPush\n");
         gstream.pushToGstream();
     }
 
@@ -676,7 +676,7 @@ int main(int argc, char *argv[])
     // GetCamProperties();
 
     int count = 0;
-    bool rtsp = true;
+    bool rtsp = false;
     int numOfPictures = 4;
     int intervalPerPicture_sec = 3;
     // SequentialShootingRoutine(numOfPictures, intervalPerPicture_sec);
@@ -693,6 +693,9 @@ int main(int argc, char *argv[])
 
     std::thread shooting_thread([&]()
                                 { SequentialShootingRoutine(sonyCamera, numOfPictures, intervalPerPicture_sec); });
+
+    printf("\n* Press 'T' to start the 'SequentialShootingRoutine' with %d shoots in intervals of %d seconds\n", numOfPictures, intervalPerPicture_sec);
+    printf("* Or press 'Q' twice to stop the code properly\n\n");
 
     /*
     std::thread streaming_thread([&]() {
@@ -764,7 +767,9 @@ void SequentialShootingRoutine(Camera sonyCamera, int numOfPictures, int interva
                 break;
         }
         // ==========================================================
-
+        
+        printf("\n* Press 'T' to start the 'SequentialShootingRoutine' with %d shoots in intervals of %d seconds\n", numOfPictures, intervalPerPicture_sec);
+        printf("* Or press 'Q' twice to stop the code properly\n\n");
         shoot.store(false);
     }
     printf("Quiting SequentialShootingRoutine\n");
@@ -780,7 +785,7 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     sonyCamera.streamInit(rtsp);
     //InitGstream(rtsp);
 
-    printf("[MAIN] [1] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+    //printf("[MAIN] [1] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
 
     std::thread gstreamLoopThread([&, rtsp]()
                                   {
@@ -799,9 +804,9 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    printf("liveView: Started!\n");
+    printf("liveView: Started!\n\n");
 
-    printf("[MAIN] [2] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+    //printf("[MAIN] [2] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
 
     /*
     > If the this is declared outside the while, the error 13105 arises
@@ -832,7 +837,7 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     {
         while (stream.load())
         {
-            printf("[MAIN] [loop] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
+            //printf("[MAIN] [loop] GetDeviceHandle = %ld\n", sonyCamera.debug_streamGetHande());
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
 

@@ -73,13 +73,13 @@ add_executable(${remotecli}
     ${crsdk_hdrs}
 )
 
-set(sdk_test "sdk_test")
+set(sony_app "sony_app")
 
-add_executable(${sdk_test}
+add_executable(${sony_app}
     ${crsdk_hdrs}
-    ${__cli_hdr_dir}/test_sdk.h
-    ${__cli_src_dir}/test_sdk.cpp
-    ${__cli_src_dir}/test_sdk2.cpp
+    ${__cli_hdr_dir}/sony_app_lib.h
+    ${__cli_src_dir}/sony_app_lib.cpp
+    ${__cli_src_dir}/sony_app.cpp
 )
 
 # add other excutables here if needed ^^^^^
@@ -92,7 +92,7 @@ set_target_properties(${remotecli} PROPERTIES
     INSTALL_RPATH "$ORIGIN"
 )
 
-set_target_properties(${sdk_test} PROPERTIES
+set_target_properties(${sony_app} PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
@@ -105,7 +105,7 @@ target_compile_options(${remotecli}
     PRIVATE -fsigned-char
 )
 
-target_compile_options(${sdk_test}
+target_compile_options(${sony_app}
     PRIVATE -fsigned-char
 )
 
@@ -114,7 +114,7 @@ target_include_directories(${remotecli}
     PUBLIC ${__crsdk_hdr_dir} # defined in enum script
 )
 
-target_include_directories(${sdk_test}
+target_include_directories(${sony_app}
     PUBLIC ${GST_INCLUDE_DIRS}              # <- NEW
     PUBLIC ${GST_RTSP_SERVER_INCLUDE_DIRS}  # <- NEW
     PUBLIC ${GSTREAMER_APP_INCLUDE_DIRS}    # <- NEW
@@ -134,7 +134,7 @@ target_link_libraries(${remotecli}
     PRIVATE ${camera_remote}
 )
 
-target_link_libraries(${sdk_test}
+target_link_libraries(${sony_app}
     PRIVATE ${camera_remote}
     ${GST_LIBRARIES}                    # <- NEW
     ${GST_RTSP_SERVER_LIBRARIES}        # <- NEW
@@ -147,14 +147,14 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
         # Must use std::experimental namespace if older than GCC8
         message("[${PROJECT_NAME}] GCC version less than 8. Using std::experimental namespace.")
         target_compile_definitions(${remotecli} PRIVATE USE_EXPERIMENTAL_FS)
-        target_compile_definitions(${sdk_test} PRIVATE USE_EXPERIMENTAL_FS)
+        target_compile_definitions(${sony_app} PRIVATE USE_EXPERIMENTAL_FS)
     endif()
 
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
         # Must explicitly link separate std::filesystem if older than GCC9
         message("[${PROJECT_NAME}] GCC version less than 9. Explicitly linking separate std::filesystem library.")
         target_link_libraries(${remotecli} PRIVATE stdc++fs)
-        target_link_libraries(${sdk_test} PRIVATE stdc++fs)
+        target_link_libraries(${sony_app} PRIVATE stdc++fs)
     endif()
 endif()
 

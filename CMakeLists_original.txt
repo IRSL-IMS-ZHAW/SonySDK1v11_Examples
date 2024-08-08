@@ -71,7 +71,7 @@ set(sdk_test "sdk_test")
 
 add_executable(${sdk_test}
     ${crsdk_hdrs}
-    ${__cli_hdr_dir}/test_sdk.h
+    ${__cli_hdr_dir}/sony_app_lib.h
     ${__cli_src_dir}/test_sdk.cpp
     ${__cli_src_dir}/test_sdk2.cpp
 )

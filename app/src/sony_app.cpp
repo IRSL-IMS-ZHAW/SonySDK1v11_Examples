@@ -1,6 +1,15 @@
+/*
+ * File: sony_app.cpp
+ * Author: Rafael Marques
+ * Last Updated: August 8, 2024
+ * Description: This app utilizes Sony SDK features to implement useful functions such as "LiveView", "Sequential Shooting", and "Streaming". 
+ *              For more information, visit the "read me" file under the ./app/src directory.
+ * Version: 1.0
+ */
+
 #include <iostream>
 #include <memory>
-#include "test_sdk.h"
+#include "sony_app_lib.h"
 #include <thread>
 #include <unistd.h>
 
@@ -15,15 +24,6 @@
 #include <fstream>
 #include <termios.h>
 
-// New Functions
-//void InitSDK();
-//bool Enumerate();
-//bool ConnectCamera(SCRSDK::CrSdkControlMode mode);
-//bool setSavePath();
-//void GetCamProperties();
-//void SingleShot();
-
-//void SequentialShooting(Camera sonyCamera, int numOfPictures, int intervalPerPicture_sec);
 
 class RemoteSDKController
 {
@@ -581,43 +581,10 @@ public:
 };
 
 
-
-
-// New Globals
-//CrInt8u *cam_id = 0;
-//SCRSDK::ICrEnumCameraObjectInfo *pEnum = nullptr;
-//SCRSDK::ICrCameraObjectInfo *pCam = nullptr;
-
-/*
-================================================
-    CHECK NEW INITIALIZATION
-================================================
-Camera sonyCamera;
-SCRSDK::ICrCameraObjectInfo *pCam = sonyCamera.getCameraObjectInfo();
-
-RemoteSDKController remoteController;
-SCRSDK::ICrEnumCameraObjectInfo *pEnum = remoteController.getEnumCameraObjectInfo();
-
-SCRSDK::CrDeviceHandle hDev = 0;
-*/
-
-
 // From GStream
-//void InitGstream(bool rtsp); // int argc, char *argv[]
-void read_flags(int &count);
+void toggle_flags(int &count);
 void checkForKeyPress();
 void liveViewRoutine(Camera sonyCamera, bool rtsp); //CrInt32u handle, 
-
-//void pushToGstream(GstElement *source, guint length, gpointer user_data, std::unique_ptr<SCRSDK::CrImageInfo> &pInfo, int &retFlag);
-//static void need_data(GstElement *source, guint length, gpointer user_data);
-//static void media_configure(GstRTSPMediaFactory *factory, GstRTSPMedia *media, gpointer user_data);
-
-//static gboolean timeout(GstRTSPServer *server);
-//static GstElement *appsrc;
-//GstElement *pipeline, *source, *decoder, *sink;
-//GMainLoop *main_loop = nullptr;
-
-//bool appsrc_ready = false;
 
 // Atomic flag to signal all threads to stop
 std::atomic<bool> quit(false);
@@ -665,15 +632,10 @@ int main(int argc, char *argv[])
     //sonyCamera.releasePcam();
     remoteController.releaseEnum();
 
-    //pEnum->Release(); // After this point, pobj or any data derived from it might be invalid!
-    //pCam->Release();  // Release the camera object info
-
     std::cout << "Connecting..." << std::endl;
     std::this_thread::sleep_for(std::chrono::seconds(5));
     std::cout << "Done!\n\n"
               << std::endl;
-
-    // GetCamProperties();
 
     int count = 0;
     bool rtsp = false;
@@ -705,7 +667,7 @@ int main(int argc, char *argv[])
 
     while (program.load())
     {
-        read_flags(count);
+        toggle_flags(count);
         std::this_thread::sleep_for(std::chrono::seconds(1)); // Reduce CPU usage
         // printf("Shoot: %d \t Pressed: %d \t Stream: %d \n", shoot.load(), pressed.load(), stream.load());
     }
@@ -745,6 +707,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+// Function that executes a sequence of shots based on the input parameters. It does not belong to any class.
 void SequentialShootingRoutine(Camera sonyCamera, int numOfPictures, int intervalPerPicture_sec)
 {
     while (program.load())
@@ -775,10 +738,9 @@ void SequentialShootingRoutine(Camera sonyCamera, int numOfPictures, int interva
     printf("Quiting SequentialShootingRoutine\n");
 }
 
-// Main function for fetching and displaying live view images
+// Main function for fetching and displaying live view images. It does not belong to any class.
 void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
 {
-
     // Assume handle and SDK setup done here
     printf("liveView: In!\n");
 
@@ -850,10 +812,9 @@ void liveViewRoutine(Camera sonyCamera, bool rtsp) //CrInt32u handle
     }
 }
 
-void read_flags(int &count)
+// Toggle flags based on user input, network signal, etc. Simulate reading flags (this should actually check some external condition)
+void toggle_flags(int &count)
 {
-    // Simulate reading flags (this should actually check some external condition)
-    // Toggle flags based on user input, network signal, etc.
     count++;
     // if (count % 100 == 0)
     //     shoot.store(true);

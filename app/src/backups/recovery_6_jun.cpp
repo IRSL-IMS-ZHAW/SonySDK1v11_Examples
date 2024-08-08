@@ -1,6 +1,6 @@
 #include <iostream>
 #include <memory>
-#include "test_sdk.h"
+#include "sony_app_lib.h"
 #include <thread>
 #include <unistd.h>
 

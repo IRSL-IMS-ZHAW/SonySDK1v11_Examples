@@ -1,4 +1,4 @@
-#include "test_sdk.h"
+#include "sony_app_lib.h"
 
 //============================================================
 bool Init()

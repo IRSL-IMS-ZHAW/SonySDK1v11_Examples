@@ -6,6 +6,7 @@ cd build
 cmake ..
 cmake --build .
 ```
+-> In our project, "sonyapp" is going to be the executable 
 
 # For release build use this instead of just cmake ..
 ```
